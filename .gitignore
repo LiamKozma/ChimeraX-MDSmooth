@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ChimeraX bundle build artifacts
+build/
+dist/
+*.whl
+src/*.egg-info/
+
+# Deep research notes
+DEEPRESEARCH.md
+deepresearch.md

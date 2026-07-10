@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Command: mdsmooth</title>
+</head>
+<body>
+
+<h2>Command: mdsmooth</h2>
+
+<h3>Usage</h3>
+<p>
+<strong>mdsmooth</strong> &nbsp;<i>structure</i>&nbsp;
+[<strong>toAtoms</strong> <i>atom-spec</i>]
+[<strong>alignAtoms</strong> <i>atom-spec</i>]
+[<strong>reference</strong> <i>frame</i>]
+[<strong>signal</strong> rmsd|pc1|ic1|dpca|deeptica]
+[<strong>lag</strong> <i>N</i>]
+[<strong>seeds</strong> <i>N</i>]
+[<strong>mode</strong> extrema|kinetic]
+[<strong>states</strong> <i>N</i>]
+[<strong>microstates</strong> <i>N</i>]
+[<strong>stateSteps</strong> <i>N</i>]
+[<strong>ticaDim</strong> <i>N</i>]
+[<strong>targetFrames</strong> <i>N</i>]
+[<strong>cutoffFrequency</strong> <i>freq</i>]
+[<strong>powerCutoff</strong> <i>fraction</i>]
+[<strong>order</strong> <i>N</i>]
+[<strong>includeEnds</strong> true|false]
+[<strong>makeMorph</strong> true|false]
+[<strong>method</strong> corkscrew|linear]
+[<strong>savePdbs</strong> <i>directory</i>]
+[<strong>showPlot</strong> true|false]
+[<strong>name</strong> <i>string</i>]
+[<strong>extraFrames</strong> <i>frame,frame,&hellip;</i>]
+</p>
+
+<p>
+The <strong>mdsmooth</strong> command reduces a molecular dynamics trajectory
+to the frames that carry its structurally meaningful motion, then builds a morph
+of just those frames. By default it computes the per-frame RMSD to a reference
+frame, applies a zero-phase low-pass Butterworth filter to remove high-frequency
+noise, finds the local maxima and minima of the filtered signal (the
+&ldquo;significant frames&rdquo;), and interpolates between them with per-segment
+step counts chosen so the morph keeps the trajectory's original timing.
+Interpolation runs through ChimeraX's own morph engine (<b>corkscrew</b>) by
+default, so rotating domains follow a screw motion rather than sliding in
+straight lines.
+</p>
+
+<h3>Arguments</h3>
+<dl>
+<dt><i>structure</i> (required)</dt>
+<dd>A single atomic model containing a trajectory (multiple coordinate sets),
+e.g. <code>#1</code>.</dd>
+
+<dt><strong>toAtoms</strong> <i>atom-spec</i></dt>
+<dd>Atoms whose signal is filtered to <i>select</i> the significant frames.
+<b>Default:</b> every atom of <i>structure</i> <i>except</i> bulk solvent and
+free ions (water, Na<sup>+</sup>, Cl<sup>&minus;</sup>, and so on), which diffuse
+freely and would otherwise swamp the macromolecule's own motion. Protein,
+nucleic acid, ligands, and nonstandard residues are all kept by default (see
+<a href="#ligands">Ligands and nonstandard residues</a> below).
+<p>Pass an explicit spec to focus the analysis on a region. This is how you
+track, say, a binding pocket rather than the whole protein:</p>
+<pre>
+mdsmooth #1 toAtoms #1@CA                    <i># backbone C-alphas only</i>
+mdsmooth #1 toAtoms #1:45,88,120,145         <i># specific pocket residues</i>
+mdsmooth #1 toAtoms #1 &amp; #1:LIG :&lt; 5        <i># everything within 5 &#8491; of ligand LIG</i>
+</pre>
+</dd>
+
+<dt><strong>alignAtoms</strong> <i>atom-spec</i></dt>
+<dd>Optional. By default the morph is <b>not</b> superimposed on anything. It
+keeps the raw simulation coordinates, so it stays registered on the input
+trajectory and drifts and tumbles exactly as the raw does, and the smoothing
+only removes the high-frequency jitter. This is what lets you overlay the morph
+on the original trajectory and watch them together. Pass <strong>alignAtoms</strong>
+only if you deliberately want to <i>remove</i> global motion by superimposing
+those atoms onto the reference frame (e.g. <code>alignAtoms #1:1-435@CA</code> to
+de-tumble on the protein). Note that superimposing on a selection holds it
+still, so aligning on the very atoms you want to watch move would pin them.</dd>
+
+<dt><strong>reference</strong> <i>frame</i></dt>
+<dd>1-based frame number used as the RMSD reference. Default <b>1</b> (first
+frame), matching cpptraj's <code>rms first</code>.</dd>
+
+<dt><strong>signal</strong> rmsd|pc1|ic1|dpca|deeptica</dt>
+<dd>Which 1D signal the significant frames are picked from.
+<p><b>rmsd</b> (default) uses each frame's RMSD to the reference. It is the
+robust choice: it always computes, has no tuning knobs, and does not depend on
+how well the trajectory samples any one motion.</p>
+<p><b>pc1</b> uses the projection onto the first principal component of the
+<strong>toAtoms</strong> selection, the single largest collective motion
+(essential dynamics), computed after rigid-body superposition so it captures
+internal motion rather than tumbling.</p>
+<p><b>ic1</b> uses the projection onto the first time-lagged independent
+component (tICA), which is the <i>slowest</i> collective motion rather than the
+largest. Slowness is often a better proxy for a functional transition than
+variance, since large thermal breathing has high variance but no function, so
+IC1 can recover a change that PC1 buries under fast wobble. Its lag is set by
+<strong>lag</strong>, and IC1's shape is checked for stability across lag times
+(an unstable slow mode is cautioned as possibly undersampled).</p>
+<p><b>dpca</b> uses dihedral PCA, the first principal component of the backbone
+&phi;/&psi; angles, sin/cos encoded to handle their periodicity. Because
+dihedrals are <i>internal</i> coordinates, dPCA needs no structural alignment
+and is immune to global tumbling, a good choice for flexible or looping
+backbones where Cartesian PCA is dominated by large lever-arm swings. It
+requires protein backbone atoms.</p>
+<p><b>deeptica</b> is a <i>learned</i> nonlinear slow CV: a DeepTICA or
+state-free reversible VAMPnet trained with PyTorch and mlcolvar, which can
+capture slow motions a linear tICA misses. It is an <b>optional, heavy</b>
+feature. PyTorch runs in a dedicated environment that you install once with
+<a href="#installLearnedCV">mdsmooth installLearnedCV</a>, and if it is missing
+the command tells you so. Because learned CVs are initialization-unstable,
+DeepTICA trains several seeds (see <strong>seeds</strong>) and takes their
+consensus, and cautions you if the seeds disagree. At modest data scales the
+linear <b>ic1</b> signal is usually the safer choice; prefer DeepTICA only when
+you have plenty of sampling with real transitions.</p>
+<p>PC1, IC1, dPC1, and DeepTICA track the <i>direction</i> of the motion rather
+than mere distance from a reference, and cost more to compute, so keep
+<strong>toAtoms</strong> focused. Everything downstream (filtering, frame
+selection, morph) is identical for all signals.</p>
+<p>All signals report a <b>cosine content</b> (0 to 1). A value in the diffusive
+regime (above 0.85) means the signal resembles a random walk, so on a single
+short trajectory the &ldquo;slow mode&rdquo; may reflect undersampled diffusion
+rather than a sampled transition, and the log and preview flag it as a caution.
+It is a diagnostic, not a verdict: a genuine slow sweep can look cosine-like
+too.</p></dd>
+
+<dt><strong>lag</strong> <i>N</i></dt>
+<dd>Lag time in frames for the <b>ic1</b> (tICA) signal and for <b>kinetic</b>
+mode; default <b>10</b>. This is tICA's one finicky knob: too small behaves like
+PC1 (fast modes leak in), too large gets noisy (few lagged frame pairs remain).
+Must be at least 1 and smaller than the number of frames. Ignored for the
+<b>rmsd</b> and <b>pc1</b> signals.</dd>
+
+<dt><strong>seeds</strong> <i>N</i></dt>
+<dd>For the <b>deeptica</b> signal only: how many independently-initialized models
+to train and take the consensus of; default <b>5</b>. More seeds give a steadier
+consensus (and a better disagreement estimate) but take proportionally longer.</dd>
+
+<dt id="installLearnedCV"><strong>mdsmooth installLearnedCV</strong>
+[<strong>gpu</strong> true|false] [<strong>indexUrl</strong> <i>url</i>]</dt>
+<dd>A separate one-time command that installs the optional learned-CV environment
+(PyTorch and mlcolvar) into a dedicated virtualenv, <i>not</i> ChimeraX's own
+Python, following the pattern of ChimeraX's built-in ML tools. This downloads
+several GB and takes a few minutes. <b>gpu true</b> selects a CUDA torch build;
+<strong>indexUrl</strong> overrides the pip index (e.g. a specific
+<code>https://download.pytorch.org/whl/cuXXX</code> or <code>&hellip;/whl/cpu</code>).
+Only needed for the <b>deeptica</b> signal.</dd>
+
+<dt><strong>mode</strong> extrema|kinetic</dt>
+<dd>How key frames are chosen. <b>extrema</b> (default) is the signal pipeline
+above: filter a 1D signal and cut at its local maxima and minima. <b>kinetic</b>
+is a different strategy. It clusters the trajectory into kinetically distinct
+<i>metastable states</i> (tICA, then k-means microstates, then a Markov State
+Model, then PCCA+ coarse-graining) and picks one representative frame per state,
+ordered along the slowest coordinate into a tour of the distinct conformations.
+It answers &ldquo;show me the N different shapes&rdquo; rather than
+&ldquo;sample the main motion&rdquo;. Kinetic mode ignores the cutoff controls
+(<strong>targetFrames</strong>, <strong>cutoffFrequency</strong>,
+<strong>powerCutoff</strong>) and the <strong>signal</strong> keyword. It needs
+the optional <b>deeptime</b> package; if it is missing the command says so and
+how to install it (<code>pip install deeptime</code>).</dd>
+
+<dt><strong>states</strong> <i>N</i></dt>
+<dd>Kinetic mode only: how many metastable states (representative key frames) to
+extract; default <b>5</b>. If PCCA+ finds fewer populated states than requested,
+you get as many as it found.</dd>
+
+<dt><strong>microstates</strong> <i>N</i></dt>
+<dd>Kinetic mode only: how many k-means microstates the Markov State Model is
+built on before coarse-graining; default <b>100</b>. Clamped to the range
+[<strong>states</strong>, number of frames &minus; 1].</dd>
+
+<dt><strong>stateSteps</strong> <i>N</i></dt>
+<dd>Kinetic mode only: interpolation frames per morph segment; default <b>20</b>.
+Because the representatives are ordered by conformation rather than time, each
+state-to-state transition simply gets equal screen time.</dd>
+
+<dt><strong>ticaDim</strong> <i>N</i></dt>
+<dd>Kinetic mode only: how many slow tICA components the clustering runs in;
+default <b>4</b>.</dd>
+
+<dt><strong>targetFrames</strong> <i>N</i></dt>
+<dd>Ask for about <i>N</i> significant frames and let the command solve for the
+low-pass cutoff that produces them. This is the recommended dial: it is the most
+intuitive way to control the movie's detail, it doubles as a speed control (more
+frames means more morph segments to build, so fewer frames build faster on a slow
+machine), and it adapts to the <strong>toAtoms</strong> selection. It re-fits the
+cutoff to whatever signal you hand it, so the same <strong>targetFrames</strong>
+gives a comparable movie whatever atoms you track. <b>Default:</b> <b>50</b> when
+no cutoff is given at all. The count is not capped, so ask for as many as you
+like. Because the number of frames is a stepwise function of the cutoff, the
+result lands <i>close</i> to <i>N</i> rather than exactly on it; the log reports
+the number actually found.
+<p>The three controls below all set the same underlying low-pass cutoff. If you
+give more than one, they are honoured in priority order (<strong>targetFrames</strong>,
+then <strong>cutoffFrequency</strong>, then <strong>powerCutoff</strong>), and
+the command logs a warning saying which one it used.</p></dd>
+
+<dt><strong>cutoffFrequency</strong> <i>freq</i></dt>
+<dd>Set the low-pass cutoff explicitly, in cycles per frame (must be between 0
+and 0.5). Lower values smooth harder and yield fewer significant frames, which is
+useful for reproducing a specific published movie. Overrides
+<strong>powerCutoff</strong>; overridden by <strong>targetFrames</strong>.</dd>
+
+<dt><strong>powerCutoff</strong> <i>fraction</i></dt>
+<dd>Choose the cutoff as the frequency that retains this fraction of cumulative
+spectral power (mean removed first). Has no default, so supply it only if you
+want spectral-power-based selection instead of a frame target. Overridden by
+<strong>targetFrames</strong> or <strong>cutoffFrequency</strong>.</dd>
+
+<dt><strong>order</strong> <i>N</i></dt>
+<dd>Butterworth filter order. Default <b>5</b>.</dd>
+
+<dt><strong>includeEnds</strong> true|false</dt>
+<dd>Include the first and last frames as significant frames even if they are not
+extrema, so the morph spans the whole trajectory. Default <b>true</b>.</dd>
+
+<dt><strong>makeMorph</strong> true|false</dt>
+<dd>Build a new morph trajectory from the significant frames. Default
+<b>true</b>. Set false to only report the frames.</dd>
+
+<dt><strong>method</strong> corkscrew|linear</dt>
+<dd>How to interpolate between consecutive significant frames. Default
+<b>corkscrew</b>: each segment is interpolated through ChimeraX's
+<a href="morph.html">morph</a> engine, which decomposes the change into a
+rigid-body screw motion plus internal-coordinate change, so rotating domains
+turn along an arc instead of atoms sliding through one another. <b>linear</b> is
+a straight-line interpolation in Cartesian space. It is faster and has no
+ChimeraX dependency, but it can stretch bonds and flatten rings across large
+conformational jumps (see <a href="#carbohydrates">Carbohydrates and other ring
+systems</a>). Either way the per-segment frame counts (and hence the movie's
+timing) are the same; only the path between key frames differs. If the morph
+engine is unavailable, corkscrew automatically falls back to linear.
+<p>Because corkscrew runs the morph engine once per segment, it takes longer to
+build on <i>larger structures</i> and at a <i>higher</i>
+<strong>cutoffFrequency</strong> (a higher cutoff keeps more significant frames,
+and hence more segments to morph). Linear is nearly instant either way.</p></dd>
+
+<dt><strong>savePdbs</strong> <i>directory</i></dt>
+<dd>Also write one PDB per significant frame into <i>directory</i> (created if
+needed), named <code>&lt;name&gt;_frame0001.pdb</code> and so on using the
+original 1-based frame numbers. These are the exact key frames the morph
+interpolates between, handy for inspection or for morphing by hand. Off by
+default.</dd>
+
+<dt><strong>showPlot</strong> true|false</dt>
+<dd>Pop up a graph of the raw and filtered signal with the significant frames
+marked (maxima red, minima blue, and any user-added frames as green diamonds on
+the unfiltered trace). Default <b>true</b>. Ignored when ChimeraX is run without
+a graphical interface (<code>--nogui</code>). The plot is interactive; see
+<a href="#addframes">Adding your own significant frames</a>.</dd>
+
+<dt><strong>name</strong> <i>string</i></dt>
+<dd>Name for the created morph model. Default <b>smoothed</b>.</dd>
+
+<dt><strong>extraFrames</strong> <i>frame,frame,&hellip;</i></dt>
+<dd>Extra significant frames to force into the morph in addition to the ones the
+filter finds, given as a comma-separated list of 1-based frame numbers (the same
+numbering as <strong>reference</strong>), e.g. <code>extraFrames 250,600</code>.
+Use this when you know a conformation matters but the filtered signal is flat
+there so no extremum is detected. A frame that is already significant is left
+as-is (no duplicate). Frames added this way are labelled <i>User</i> in the
+results table and drawn as green diamonds on the plot. You can also add them by
+clicking; see <a href="#addframes">below</a>.</dd>
+</dl>
+
+<h3 id="addframes">Adding your own significant frames</h3>
+<p>
+Sometimes a conformation you care about sits on a flat stretch of the filtered
+signal, so it is not picked up as a maximum or minimum. You can add it yourself
+in two ways:
+</p>
+<ul>
+<li><b>By command:</b> pass <strong>extraFrames</strong> with the 1-based frame
+numbers, e.g. <code>mdsmooth #1 cutoffFrequency 0.01 extraFrames 250,600</code>.</li>
+<li><b>By clicking the plot:</b> in the plot window, click
+<b>Add significant frame</b>, then click on the graph where you want the frame.
+A green preview marker lands on the <i>unfiltered</i> (grey) trace so you can see
+exactly which frame you are about to add; click again to move it, then click
+<b>Add frame&nbsp;N</b> to keep it. The morph is rebuilt in place to include the
+new key frame, and the overlay and playback link follow the rebuilt copy.</li>
+</ul>
+
+<h3 id="ligands">Ligands and nonstandard residues</h3>
+<p>
+Selection is by atom, so ligands and nonstandard residues are treated exactly
+like anything else. In the <b>default</b> <strong>toAtoms</strong> set they are
+<i>kept</i> (only bulk water and free ions are removed), so a bound ligand's
+motion contributes to the signal and appears in the morph. To analyze a ligand
+on its own, name it: <code>toAtoms #1:LIG</code>. To watch a pocket
+<i>including</i> its ligand, use a zone: <code>toAtoms #1 &amp; #1:LIG :&lt; 5</code>.
+The whole structure, ligands and ions included, is still carried through the
+morph regardless of <strong>toAtoms</strong>, which only chooses <i>which</i>
+atoms' signal picks the significant frames.
+</p>
+
+<h3 id="carbohydrates">Carbohydrates and other ring systems</h3>
+<p>
+Sugar rings and other small rings have preferred shapes (for a pyranose, the
+chair) that matter for their function, so it is worth knowing where MDSmooth can
+and cannot affect them.
+</p>
+<p>
+The frames MDSmooth selects are never altered. The significant frames, and the
+PDBs written by <strong>savePdbs</strong>, are exact snapshots from your
+trajectory, so their ring shapes are whatever the simulation produced. The only
+synthetic geometry is the <i>in-between</i> frames of the morph, and a ring can
+look distorted there only when its pucker changes between two neighbouring key
+frames. Corkscrew, the default, interpolates local geometry rather than dragging
+atoms along straight lines, so it preserves ring shape far better than
+<b>linear</b>, which can flatten a ring as it flips. For carbohydrate-heavy
+systems, keep the default corkscrew method and read the in-between frames as
+illustration; the real geometry lives in the key frames.
+</p>
+<p>
+None of the signals tracks ring puckering directly (dPCA uses protein backbone
+dihedrals, not sugar rings), so if a pucker transition is itself the motion you
+want to show, pick the frames around it by hand with
+<strong>extraFrames</strong>.
+</p>
+
+<h3 id="viewing">Viewing and playing the results</h3>
+<p>
+Each build adds the smoothed morph as a <b>new model</b> (<code>#2</code>,
+<code>#3</code>, and so on) alongside the raw trajectory (<code>#1</code>), with a
+descriptive name such as <i>smoothed (IC1, 50 key frames)</i>. Use the
+<a href="../tools/modelpanel.html">Model Panel</a> or <code>info models</code> to
+see which number is which.
+</p>
+<ul>
+<li><b>Play one morph:</b> open its own Coordinate Sets slider
+    (<code>coordset slider #2</code>) and press play. The plot opened by the
+    command scrubs the <i>raw</i> model, not the morph.</li>
+<li><b>Play the raw and a smoothed copy together, in sync:</b>
+    <code>coordset #1,2 1,1901 loop true</code> (use your trajectory's frame
+    count). This works because an <b>extrema-mode</b> morph preserves the raw's
+    timeline, so they stay aligned frame for frame. It is a good way to compare
+    RMSD against IC1 against PC1 side by side: <code>coordset #1,2,3 1,1901</code>.
+    Stop with <code>coordset stop</code>.</li>
+<li><b>Kinetic tours are the exception:</b> a <strong>mode kinetic</strong> morph
+    is a short conformation sequence (about <i>states</i>&times;<strong>stateSteps</strong>
+    frames), <i>not</i> a timeline, so play it on its own slider
+    (<code>coordset slider #2</code>) rather than syncing it to the raw.</li>
+<li><b>Grey-ghost overlay</b> (raw faded under the smoothed copy): easiest from the
+    <b>MDSmooth panel</b>, which also links playback automatically. By hand:
+    <code>transparency #1 60 target acbps ; color #1 gray target ac</code>.</li>
+<li><b>Record a movie</b> of any of the above with the
+    <a href="movie.html">movie</a> command.</li>
+</ul>
+
+<h3>Examples</h3>
+<pre>
+open trajectory.pdb
+mdsmooth #1
+mdsmooth #1 toAtoms #1@CA cutoffFrequency 0.01 name clean
+mdsmooth #1 toAtoms #1 &amp; #1:LIG :&lt; 5 method corkscrew   <i># binding-pocket motion, corkscrew morph</i>
+mdsmooth #1 signal ic1 toAtoms :436-441 targetFrames 50    <i># slowest binding-site motion (tICA)</i>
+mdsmooth #1 mode kinetic states 5 toAtoms :436-441         <i># tour of 5 metastable states (needs deeptime)</i>
+mdsmooth #1 method linear savePdbs ~/Desktop/keyframes    <i># linear morph plus export the key frames</i>
+mdsmooth #1 cutoffFrequency 0.01 extraFrames 250,600      <i># force two extra frames into the morph</i>
+coordset #1,2 1,1901 loop true                              <i># play raw and smoothed together, in sync</i>
+</pre>
+
+<p>
+The command logs a table of significant frames (frame number, filtered signal
+value, type, and interpolation steps) and adds the morph as a new model, which
+can then be played and recorded with ChimeraX's
+<a href="movie.html">movie</a> command.
+</p>
+
+</body>
+</html>

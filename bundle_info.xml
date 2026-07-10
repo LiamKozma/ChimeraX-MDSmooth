@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<!--
+  ChimeraX bundle metadata. `chimerax.bundle_builder` reads this file to
+  generate the wheel. Build/install from this directory with:
+
+      chimerax  (then, at the ChimeraX command line)
+      devel build .
+      devel install .
+-->
+<BundleInfo name="ChimeraX-MDSmooth"
+	    version="1.0.0b2"
+	    package="chimerax.md_smooth"
+	    minSessionVersion="1" maxSessionVersion="1"
+	    purePython="true"
+	    customInit="false">
+
+  <Author>Liam Kozma</Author>
+  <Email>liam@liamkozma.com</Email>
+  <URL>https://github.com/LiamKozma/ChimeraX-MDSmooth</URL>
+
+  <Synopsis>Reduce an MD trajectory to its meaningful frames and build clean morph movies</Synopsis>
+  <Description>Turn a noisy molecular-dynamics trajectory into a clean morph movie
+that shows real conformational motion instead of thermal jitter.
+
+MDSmooth reads a 1D signal from the trajectory (the RMSD to a reference frame by
+default, or a collective motion such as PC1, the slowest tICA component IC1, or a
+dihedral-based dPC1), applies a zero-phase Butterworth low-pass filter to remove
+high-frequency jitter, keeps the frames where the signal turns (its local maxima
+and minima), and builds a morph between them. Per-segment step counts are chosen
+so the morph preserves the trajectory's real timing.
+
+Interpolation defaults to ChimeraX's own corkscrew morph engine, so rotating
+domains follow a screw motion, with a dependency-free linear fallback. A kinetic
+mode is also available: it groups the trajectory into metastable states (tICA, a
+Markov State Model, then PCCA+) and tours one representative frame per state. An
+interactive plot shows the raw and filtered signal with the kept frames marked.
+Click it to scrub the trajectory, or add frames the filter would otherwise skip.
+
+Works from the mdsmooth command or a Tools, Trajectory Analysis panel, and turns
+a full trajectory into a ready-to-record morph of its meaningful frames in a
+single step.</Description>
+
+  <Categories>
+    <Category name="Trajectory Analysis"/>
+    <Category name="Structure Analysis"/>
+  </Categories>
+
+  <!-- Ship the command help pages (src/docs/**) inside the wheel so the tool's
+       Help button and `help mdsmooth` resolve. -->
+  <DataFiles>
+    <DataDir>docs</DataDir>
+  </DataFiles>
+
+  <Dependencies>
+    <Dependency name="ChimeraX-Core" version="~=1.5"/>
+    <Dependency name="ChimeraX-Atomic" version="~=1.0"/>
+    <Dependency name="ChimeraX-Geometry" version="~=1.0"/>
+    <!-- The default corkscrew interpolation runs the `morph` command; it ships
+         with ChimeraX, and the tool falls back to linear if it is missing. -->
+    <Dependency name="ChimeraX-Morph" version=">=1.0"/>
+  </Dependencies>
+
+  <Classifiers>
+    <PythonClassifier>Development Status :: 4 - Beta</PythonClassifier>
+    <PythonClassifier>License :: OSI Approved :: MIT License</PythonClassifier>
+    <PythonClassifier>Intended Audience :: Science/Research</PythonClassifier>
+    <PythonClassifier>Topic :: Scientific/Engineering :: Chemistry</PythonClassifier>
+
+    <!-- Registers the `mdsmooth` command with ChimeraX. -->
+    <ChimeraXClassifier>ChimeraX :: Command :: mdsmooth :: Trajectory Analysis ::
+      Low-pass filter a trajectory's RMSD and morph its significant frames</ChimeraXClassifier>
+
+    <!-- One-time install of the optional learned-CV (DeepTICA) venv (torch + mlcolvar). -->
+    <ChimeraXClassifier>ChimeraX :: Command :: mdsmooth installLearnedCV :: Trajectory Analysis ::
+      Install the optional PyTorch/mlcolvar environment for the DeepTICA signal</ChimeraXClassifier>
+
+    <!-- Registers the "MDSmooth" GUI panel under Tools > Trajectory Analysis. -->
+    <ChimeraXClassifier>ChimeraX :: Tool :: MDSmooth :: Trajectory Analysis ::
+      Build a smoothed overlay of a trajectory and pop up its RMSD analysis</ChimeraXClassifier>
+  </Classifiers>
+
+</BundleInfo>
